@@ -33,9 +33,12 @@ use std::{
 	process,
 	sync::Arc,
 	f32::consts,
+	time::Instant,
 };
 
 use rand;
+
+use cgmath;
 
 #[derive(Default, Debug, Clone)]
 struct Vertex {
@@ -68,7 +71,7 @@ fn main() {
 
 	let window_builder = WindowBuilder::new()
 		.with_title("Vulkan Tunnel")
-		.with_inner_size(winit::dpi::LogicalSize::new(128.0, 128.0));
+		.with_inner_size(winit::dpi::LogicalSize::new(1024.0, 1024.0));
 
 	let surface = match window_builder.build_vk_surface(&event_loop, instance.clone()) {
 		Ok(s) => s,
@@ -176,8 +179,15 @@ fn main() {
 
 				layout(location = 0) in vec3 position;
 
+				layout(push_constant) uniform Camera {
+					mat4 projection_matrix;
+					float z;
+				} camera;
+
 				void main() {
-					gl_Position = vec4(position, 1.0);
+					vec3 view_position = position;
+					view_position.z += camera.z;
+					gl_Position = camera.projection_matrix * vec4(view_position, 1.0);
 				}
 			"
 		}
@@ -212,6 +222,19 @@ fn main() {
 			eprintln!("Could not load fragment shader: {}", err);
 			process::exit(1);
 		}
+	};
+
+	let field_of_view_y = cgmath::Rad(45.0 * consts::PI / 180.0);
+	let aspect = 1.0;
+
+	let mut camera = vertex_shader_declaration::ty::Camera {
+		z: -5.0,
+		projection_matrix: cgmath::perspective(
+			field_of_view_y,
+			aspect,
+			0.1, // Near
+			100.0 // Far
+		).into()
 	};
 
 	let render_pass = Arc::new(
@@ -263,6 +286,10 @@ fn main() {
 
 	let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
+	let start_timestamp = Instant::now();
+
+	let tunnel_journey_duration_ms = 5000;
+
 	event_loop.run(move |event, _, control_flow| {
 		match event {
 			Event::WindowEvent {event: WindowEvent::CloseRequested, ..} => *control_flow = ControlFlow::Exit,
@@ -310,6 +337,9 @@ fn main() {
 				)
 				.unwrap();
 
+				let journey_completion_ratio = start_timestamp.elapsed().as_millis() as f32 / tunnel_journey_duration_ms as f32;
+				camera.z = -tunnel_depth * (1.0 - journey_completion_ratio);
+
 				builder
 					.begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
 					.unwrap()
@@ -319,7 +349,7 @@ fn main() {
 						vertex_buffer.clone(),
 						index_buffer.clone(),
 						(),
-						(),
+						camera,
 					)
 					.unwrap()
 					.end_render_pass()
