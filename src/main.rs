@@ -32,7 +32,16 @@ use winit::{
 use std::{
 	process,
 	sync::Arc,
+	f32::consts,
 };
+
+use rand;
+
+#[derive(Default, Debug, Clone)]
+struct Vertex {
+	position: [f32; 3],
+}
+vulkano::impl_vertex!(Vertex, position);
 
 fn main() {
 	let required_extensions = vulkano_win::required_extensions();
@@ -56,6 +65,7 @@ fn main() {
 	println!("Using Vulkan physical device '{}' type: {:?}", physical_device.name(), physical_device.ty());
 
 	let event_loop = EventLoop::new();
+
 	let window_builder = WindowBuilder::new()
 		.with_title("Vulkan Tunnel")
 		.with_inner_size(winit::dpi::LogicalSize::new(128.0, 128.0));
@@ -133,24 +143,27 @@ fn main() {
 
 	println!("Number of swapchain images: {}", images.len());
 
-	#[derive(Default, Debug, Clone)]
-	struct Vertex {
-		position: [f32; 2],
-	}
-	vulkano::impl_vertex!(Vertex, position);
+	let tunnel_depth = 20.0;
+	let tunnel_depth_subdivs = 200;
+	let tunnel_radial_subdivs = 200;
+	let (vertices, indices) = create_tunnel_mesh(tunnel_depth, tunnel_depth_subdivs, tunnel_radial_subdivs);
 
 	let vertex_buffer = {
 		CpuAccessibleBuffer::from_iter(
 			device.clone(),
 			BufferUsage::all(),
 			false,
-			[
-				Vertex { position: [-0.5,  -0.25], },
-				Vertex { position: [ 0.0,   0.5 ], },
-				Vertex { position: [ 0.25, -0.1 ], },
-			]
-			.iter()
-			.cloned(),
+			vertices.iter().cloned(),
+		)
+		.unwrap()
+	};
+
+	let index_buffer = {
+		CpuAccessibleBuffer::from_iter(
+			device.clone(),
+			BufferUsage::all(),
+			false,
+			indices.iter().cloned(),
 		)
 		.unwrap()
 	};
@@ -161,10 +174,10 @@ fn main() {
 			src: "
 				#version 450
 
-				layout(location = 0) in vec2 position;
+				layout(location = 0) in vec3 position;
 
 				void main() {
-					gl_Position = vec4(position, 0.0, 1.0);
+					gl_Position = vec4(position, 1.0);
 				}
 			"
 		}
@@ -223,7 +236,7 @@ fn main() {
 	let pipeline = match GraphicsPipeline::start()
 			.vertex_input_single_buffer::<Vertex>()
 			.vertex_shader(vertex_shader.main_entry_point(), ())
-			.triangle_list()
+			.triangle_strip()
 			.viewports_dynamic_scissors_irrelevant(1)
 			.fragment_shader(fragment_shader.main_entry_point(), ())
 			.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
@@ -300,10 +313,11 @@ fn main() {
 				builder
 					.begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
 					.unwrap()
-					.draw(
+					.draw_indexed(
 						pipeline.clone(),
 						&dynamic_state,
 						vertex_buffer.clone(),
+						index_buffer.clone(),
 						(),
 						(),
 					)
@@ -340,22 +354,6 @@ fn main() {
 			_ => (),
 		}
 	});
-
-// 	event_loop.run(move |event, _, control_flow| {
-// 		*control_flow = ControlFlow::Wait;
-// 		println!("{:?}", event);
-// 		
-// 		match event {
-// 			Event::WindowEvent {
-// 				event: WindowEvent::CloseRequested,
-// 				window_id,
-// 			} if window_id == window.id() => *control_flow = ControlFlow::Exit,
-// 			Event::MainEventsCleared => {
-// 				window.request_redraw();
-// 			}
-// 			_ => (),
-// 		}
-// 	});
 }
 
 fn window_size_dependent_setup(
@@ -384,4 +382,41 @@ fn window_size_dependent_setup(
 			) as Arc<dyn FramebufferAbstract + Send + Sync>
 		})
 		.collect::<Vec<_>>()
+}
+
+fn create_tunnel_mesh(depth: f32, depth_subdivs: u32, radial_subdivs: u32) -> (Vec<Vertex>, Vec<u16>) {
+	let mut vertices = Vec::<Vertex>::with_capacity((depth_subdivs * radial_subdivs * 3) as usize);
+	let mut indices = Vec::<u16>::with_capacity(((depth_subdivs-1) * 6 * (radial_subdivs+1)) as usize);
+
+	fn noise() -> f32 {
+		return (rand::random::<f32>() - 0.5) * 0.1;
+	}
+
+	let slice_angle = (consts::PI * 2.0) / radial_subdivs as f32;
+
+	for j in 0..depth_subdivs {
+		for i in 0..radial_subdivs {
+			let angle = slice_angle * i as f32;
+			vertices.push(Vertex { position: [
+				angle.cos() + noise(),
+				angle.sin() + noise(),
+				(j as f32 * (depth / depth_subdivs as f32)) + noise(),
+			]});
+		}
+	}
+
+	for j in 0..depth_subdivs {
+		for i in 0..radial_subdivs {
+			let mi  =  i    % radial_subdivs;
+			let mi2 = (i+1) % radial_subdivs;
+			indices.push(((j+1) * radial_subdivs + mi)  as u16);
+			indices.push(( j    * radial_subdivs + mi)  as u16); // mesh[j][mi]
+			indices.push(((j)   * radial_subdivs + mi2) as u16);
+			indices.push(((j+1) * radial_subdivs + mi)  as u16);
+			indices.push(( j    * radial_subdivs + mi2) as u16);
+			indices.push(((j+1) * radial_subdivs + mi2) as u16);
+		}
+	}
+
+	return (vertices, indices);
 }
