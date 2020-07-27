@@ -36,15 +36,13 @@ use std::{
 	time::Instant,
 };
 
-use rand;
-
 use cgmath;
 
-#[derive(Default, Debug, Clone)]
-struct Vertex {
-	position: [f32; 3],
-}
-vulkano::impl_vertex!(Vertex, position);
+mod vertex;
+use vertex::Vertex;
+
+mod tunnel;
+mod flare;
 
 fn main() {
 	let required_extensions = vulkano_win::required_extensions();
@@ -113,7 +111,6 @@ fn main() {
 
 	let (mut swapchain, images) = {
 		let caps = surface.capabilities(physical_device).unwrap();
-		println!("Min image count: {}", caps.min_image_count);
 
 		let alpha = caps.supported_composite_alpha.iter().next().unwrap();
 		let format = caps.supported_formats[0].0;
@@ -144,90 +141,25 @@ fn main() {
 		}
 	};
 
-	println!("Number of swapchain images: {}", images.len());
-
 	let tunnel_depth = 20.0;
 	let tunnel_depth_subdivs = 200;
 	let tunnel_radial_subdivs = 200;
-	let (vertices, indices) = create_tunnel_mesh(tunnel_depth, tunnel_depth_subdivs, tunnel_radial_subdivs);
+	let (vertices, indices) = tunnel::create_mesh(tunnel_depth, tunnel_depth_subdivs, tunnel_radial_subdivs);
 
 	let vertex_buffer = {
-		CpuAccessibleBuffer::from_iter(
-			device.clone(),
-			BufferUsage::all(),
-			false,
-			vertices.iter().cloned(),
-		)
-		.unwrap()
+		CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, vertices.iter().cloned()).unwrap()
 	};
 
 	let index_buffer = {
-		CpuAccessibleBuffer::from_iter(
-			device.clone(),
-			BufferUsage::all(),
-			false,
-			indices.iter().cloned(),
-		)
-		.unwrap()
+		CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, indices.iter().cloned()).unwrap()
 	};
 
-	mod vertex_shader_declaration {
-		vulkano_shaders::shader! {
-			ty: "vertex",
-			src: "
-				#version 450
 
-				layout(location = 0) in vec3 position;
-
-				layout(push_constant) uniform Camera {
-					mat4 projection_matrix;
-					float z;
-				} camera;
-
-				void main() {
-					vec3 view_position = position;
-					view_position.z += camera.z;
-					gl_Position = camera.projection_matrix * vec4(view_position, 1.0);
-				}
-			"
-		}
-	}
-
-	mod fragment_shader_declaration {
-		vulkano_shaders::shader! {
-			ty: "fragment",
-			src: "
-				#version 450
-
-				layout(location = 0) out vec4 f_color;
-
-				void main() {
-					f_color = vec4(1.0, 0.0, 0.0, 1.0);
-				}
-			"
-		}
-	}
-
-	let vertex_shader = match vertex_shader_declaration::Shader::load(device.clone()) {
-		Ok(shader) => shader,
-		Err(err) => {
-			eprintln!("Could not load vertex shader: {}", err);
-			process::exit(1);
-		}
-	};
-
-	let fragment_shader = match fragment_shader_declaration::Shader::load(device.clone()) {
-		Ok(shader) => shader,
-		Err(err) => {
-			eprintln!("Could not load fragment shader: {}", err);
-			process::exit(1);
-		}
-	};
 
 	let field_of_view_y = cgmath::Rad(45.0 * consts::PI / 180.0);
 	let aspect = 1.0;
 
-	let mut camera = vertex_shader_declaration::ty::Camera {
+	let mut camera = tunnel::vertex_shader_decl::ty::Camera {
 		z: -5.0,
 		projection_matrix: cgmath::perspective(
 			field_of_view_y,
@@ -256,7 +188,7 @@ fn main() {
 		.unwrap(),
 	);
 
-	let pipeline = match GraphicsPipeline::start()
+	let tunnel_pipeline = match GraphicsPipeline::start()
 			.vertex_input_single_buffer::<Vertex>()
 			.vertex_shader(vertex_shader.main_entry_point(), ())
 			.triangle_strip()
@@ -266,7 +198,7 @@ fn main() {
 			.build(device.clone()) {
 		Ok(p) => Arc::new(p),
 		Err(err) => {
-			eprintln!("Could not create graphics pipeline: {}", err);
+			eprintln!("Could not create graphics pipeline for tunnel: {}", err);
 			process::exit(1);
 		}
 	};
@@ -287,7 +219,6 @@ fn main() {
 	let mut previous_frame_end = Some(sync::now(device.clone()).boxed());
 
 	let start_timestamp = Instant::now();
-
 	let tunnel_journey_duration_ms = 5000;
 
 	event_loop.run(move |event, _, control_flow| {
@@ -344,7 +275,7 @@ fn main() {
 					.begin_render_pass(framebuffers[image_num].clone(), false, clear_values)
 					.unwrap()
 					.draw_indexed(
-						pipeline.clone(),
+						tunnel_pipeline.clone(),
 						&dynamic_state,
 						vertex_buffer.clone(),
 						index_buffer.clone(),
@@ -412,41 +343,4 @@ fn window_size_dependent_setup(
 			) as Arc<dyn FramebufferAbstract + Send + Sync>
 		})
 		.collect::<Vec<_>>()
-}
-
-fn create_tunnel_mesh(depth: f32, depth_subdivs: u32, radial_subdivs: u32) -> (Vec<Vertex>, Vec<u16>) {
-	let mut vertices = Vec::<Vertex>::with_capacity((depth_subdivs * radial_subdivs * 3) as usize);
-	let mut indices = Vec::<u16>::with_capacity(((depth_subdivs-1) * 6 * (radial_subdivs+1)) as usize);
-
-	fn noise() -> f32 {
-		return (rand::random::<f32>() - 0.5) * 0.1;
-	}
-
-	let slice_angle = (consts::PI * 2.0) / radial_subdivs as f32;
-
-	for j in 0..depth_subdivs {
-		for i in 0..radial_subdivs {
-			let angle = slice_angle * i as f32;
-			vertices.push(Vertex { position: [
-				angle.cos() + noise(),
-				angle.sin() + noise(),
-				(j as f32 * (depth / depth_subdivs as f32)) + noise(),
-			]});
-		}
-	}
-
-	for j in 0..depth_subdivs {
-		for i in 0..radial_subdivs {
-			let mi  =  i    % radial_subdivs;
-			let mi2 = (i+1) % radial_subdivs;
-			indices.push(((j+1) * radial_subdivs + mi)  as u16);
-			indices.push(( j    * radial_subdivs + mi)  as u16); // mesh[j][mi]
-			indices.push(((j)   * radial_subdivs + mi2) as u16);
-			indices.push(((j+1) * radial_subdivs + mi)  as u16);
-			indices.push(( j    * radial_subdivs + mi2) as u16);
-			indices.push(((j+1) * radial_subdivs + mi2) as u16);
-		}
-	}
-
-	return (vertices, indices);
 }
