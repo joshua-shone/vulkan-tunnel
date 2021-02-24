@@ -7,8 +7,13 @@ use rand;
 use vulkano::{
 	pipeline::{
 		GraphicsPipeline,
+		GraphicsPipelineAbstract,
 	},
-	framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass},
+	framebuffer::{
+		Subpass,
+		RenderPass,
+	},
+	device::Device,
 };
 
 use crate::vertex::Vertex;
@@ -62,7 +67,7 @@ pub mod fragment_shader_decl {
 	}
 }
 
-fn create_pipeline() {
+pub fn create_pipeline<'a>(device: &'a Device, render_pass: &'a RenderPass) -> &'a GraphicsPipelineAbstract {
 	let vertex_shader = match vertex_shader_decl::Shader::load(device.clone()) {
 		Ok(shader) => shader,
 		Err(err) => {
@@ -79,7 +84,7 @@ fn create_pipeline() {
 		}
 	};
 
-	GraphicsPipeline::start()
+	return GraphicsPipeline::start()
 	.vertex_input_single_buffer::<Vertex>()
 	.vertex_shader(vertex_shader.main_entry_point(), ())
 	.triangle_strip()
@@ -89,7 +94,7 @@ fn create_pipeline() {
 	.build(device.clone());
 }
 
-fn create_mesh(depth: f32, depth_subdivs: u32, radial_subdivs: u32) -> (Vec<Vertex>, Vec<u16>) {
+pub fn create_mesh(depth: f32, depth_subdivs: u32, radial_subdivs: u32) -> (Vec<Vertex>, Vec<u16>) {
 	let mut vertices = Vec::<Vertex>::with_capacity((depth_subdivs * radial_subdivs * 3) as usize);
 	let mut indices = Vec::<u16>::with_capacity(((depth_subdivs-1) * 6 * (radial_subdivs+1)) as usize);
 

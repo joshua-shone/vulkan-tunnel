@@ -10,10 +10,9 @@ use vulkano::{
 	buffer::{BufferUsage, CpuAccessibleBuffer},
 	command_buffer::{AutoCommandBufferBuilder, DynamicState},
 	pipeline::{
-		GraphicsPipeline,
 		viewport::{Viewport},
 	},
-	framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract, Subpass},
+	framebuffer::{Framebuffer, FramebufferAbstract, RenderPassAbstract},
 	sync,
 	sync::{FlushError, GpuFuture},
 };
@@ -39,7 +38,6 @@ use std::{
 use cgmath;
 
 mod vertex;
-use vertex::Vertex;
 
 mod tunnel;
 mod flare;
@@ -154,8 +152,6 @@ fn main() {
 		CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, indices.iter().cloned()).unwrap()
 	};
 
-
-
 	let field_of_view_y = cgmath::Rad(45.0 * consts::PI / 180.0);
 	let aspect = 1.0;
 
@@ -188,20 +184,22 @@ fn main() {
 		.unwrap(),
 	);
 
-	let tunnel_pipeline = match GraphicsPipeline::start()
-			.vertex_input_single_buffer::<Vertex>()
-			.vertex_shader(vertex_shader.main_entry_point(), ())
-			.triangle_strip()
-			.viewports_dynamic_scissors_irrelevant(1)
-			.fragment_shader(fragment_shader.main_entry_point(), ())
-			.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
-			.build(device.clone()) {
-		Ok(p) => Arc::new(p),
-		Err(err) => {
-			eprintln!("Could not create graphics pipeline for tunnel: {}", err);
-			process::exit(1);
-		}
-	};
+	let tunnel_pipeline = tunnel::create_pipeline();
+
+// 	let tunnel_pipeline = match GraphicsPipeline::start()
+// 			.vertex_input_single_buffer::<Vertex>()
+// 			.vertex_shader(vertex_shader.main_entry_point(), ())
+// 			.triangle_strip()
+// 			.viewports_dynamic_scissors_irrelevant(1)
+// 			.fragment_shader(fragment_shader.main_entry_point(), ())
+// 			.render_pass(Subpass::from(render_pass.clone(), 0).unwrap())
+// 			.build(device.clone()) {
+// 		Ok(p) => Arc::new(p),
+// 		Err(err) => {
+// 			eprintln!("Could not create graphics pipeline for tunnel: {}", err);
+// 			process::exit(1);
+// 		}
+// 	};
 
 	let mut dynamic_state = DynamicState {
 		line_width: None,
